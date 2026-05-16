@@ -1,6 +1,6 @@
 import { logging } from "./logger.js";
 import { rootPathId } from "./filesystem/physical/rootPathId.js";
-import { RoutePrefixMap, buildFileRoutesByPathInterface, buildImportString, buildRouteTreeConfig, checkFileExists, checkRouteFullPathUniqueness, createRouteNodesByFullPath, createRouteNodesById, createRouteNodesByTo, createTokenRegex, determineNodePath, findParent, format, getImportForRouteNode, getResolvedRouteNodeVariableName, hasParentRoute, isSegmentPathless, isSingleExportRouteFile, mergeImportDeclarations, multiSortBy, removeExt, removeGroups, removeLastSegmentFromPath, removeLayoutSegmentsWithEscape, removeTrailingSlash, removeUnderscoresWithEscape, replaceBackslash, trimPathLeft } from "./utils.js";
+import { RoutePrefixMap, buildFileRoutesByPathInterface, buildImportString, buildRouteTreeConfig, checkFileExists, checkRouteFullPathUniqueness, createRouteNodesByFullPath, createRouteNodesById, createRouteNodesByTo, createTokenRegex, determineNodePath, extractSvelteModuleScript, findParent, format, getImportForRouteNode, getResolvedRouteNodeVariableName, hasParentRoute, isSegmentPathless, isSingleExportRouteFile, mergeImportDeclarations, multiSortBy, removeExt, removeGroups, removeLastSegmentFromPath, removeLayoutSegmentsWithEscape, removeTrailingSlash, removeUnderscoresWithEscape, replaceBackslash, trimPathLeft } from "./utils.js";
 import { getRouteNodes } from "./filesystem/virtual/getRouteNodes.js";
 import { getRouteNodes as getRouteNodes$1, isVirtualConfigFile } from "./filesystem/physical/getRouteNodes.js";
 import { fillTemplate, getTargetTemplate } from "./template.js";
@@ -284,7 +284,7 @@ var Generator = class Generator {
 		const routeImports = [];
 		const virtualRouteNodes = [];
 		for (const node of sortedRouteNodes) if (node.isVirtual) virtualRouteNodes.push(`const ${node.variableName}RouteImport = createFileRoute('${node.routePath}')()`);
-		else if (isSingleExportRouteFile(node.filePath)) virtualRouteNodes.push(`const ${node.variableName}RouteImport = createFileRoute('${node.routePath}')()`);
+		else if (isSingleExportRouteFile(node.filePath) && !node.hasNamedRouteExport) virtualRouteNodes.push(`const ${node.variableName}RouteImport = createFileRoute('${node.routePath}')()`);
 		else routeImports.push(getImportForRouteNode(node, config, this.generatedRouteTreePath, this.root));
 		const rootIsSfc = isSingleExportRouteFile(rootRouteNode.filePath);
 		if (rootIsSfc) virtualRouteNodes.unshift(`const rootRouteImport = createRootRoute()`);
@@ -343,6 +343,7 @@ var Generator = class Generator {
 					["pendingComponent", pendingComponentNode]
 				].filter((d) => d[1]).map((d) => {
 					const isSfc = isSingleExportRouteFile(d[1].filePath);
+					if (d[0] === "component" && d[1] === node && node.hasNamedRouteExport && node.filePath.endsWith(".svelte")) return `component: ${node.variableName}RouteComponent`;
 					const exportName = isSfc ? "default" : d[0];
 					const importPath = replaceBackslash(isSfc ? path.relative(path.dirname(config.generatedRouteTree), path.resolve(config.routesDirectory, d[1].filePath)) : removeExt(path.relative(path.dirname(config.generatedRouteTree), path.resolve(config.routesDirectory, d[1].filePath)), config.addExtensions));
 					return `${d[0]}: lazyRouteComponent(() => import('./${importPath}'), '${exportName}')`;
@@ -498,7 +499,9 @@ ${acc.routeTree.map((child) => `${child.variableName}Route: typeof ${getResolved
 				});
 			} else return null;
 		}
-		if (!isSingleExportRouteFile(node.filePath)) {
+		const isSfc = isSingleExportRouteFile(node.filePath);
+		const isSvelteSfc = node.filePath.endsWith(".svelte");
+		if (!isSfc) {
 			const transformResult = await transform({
 				source: updatedCacheEntry.fileContent,
 				filename: node.fullPath,
@@ -530,6 +533,28 @@ ${acc.routeTree.map((child) => `${child.variableName}Route: typeof ${getResolved
 			if (transformResult.result === "modified") {
 				updatedCacheEntry.fileContent = transformResult.output;
 				shouldWriteRouteFile = true;
+			}
+		} else if (isSvelteSfc) {
+			const moduleScript = extractSvelteModuleScript(updatedCacheEntry.fileContent);
+			if (moduleScript) {
+				const transformResult = await transform({
+					source: moduleScript.content,
+					filename: node.fullPath,
+					ctx: {
+						target: this.config.target,
+						routeId: escapedRoutePath,
+						lazy: node._fsRouteType === "lazy"
+					},
+					node
+				});
+				if (transformResult.result === "error") throw new Error(`Error transforming <script module> in ${node.fullPath}: ${transformResult.error}`);
+				if (transformResult.result !== "no-route-export") {
+					node.hasNamedRouteExport = true;
+					if (transformResult.result === "modified") {
+						updatedCacheEntry.fileContent = updatedCacheEntry.fileContent.slice(0, moduleScript.contentStart) + transformResult.output + updatedCacheEntry.fileContent.slice(moduleScript.contentEnd);
+						shouldWriteRouteFile = true;
+					}
+				}
 			}
 		}
 		for (const plugin of this.plugins) plugin.afterTransform?.({

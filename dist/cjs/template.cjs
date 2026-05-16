@@ -148,6 +148,13 @@ function getTargetTemplate(config) {
 			subPkg: "svelte-router",
 			rootRoute: {
 				template: () => [
+					"<script module lang=\"ts\">\n",
+					"%%tsrImports%%\n",
+					"\n",
+					"  %%tsrExportStart%%{\n",
+					"    // beforeLoad: ({ context }) => { ... },\n",
+					"  }%%tsrExportEnd%%\n",
+					"<\/script>\n\n",
 					"<script lang=\"ts\">\n",
 					"  import { Outlet } from \"@tanstack/svelte-router\";\n",
 					"<\/script>\n\n",
@@ -155,33 +162,48 @@ function getTargetTemplate(config) {
 					"<Outlet />\n"
 				].join(""),
 				imports: {
-					tsrImports: () => "",
-					tsrExportStart: () => "",
-					tsrExportEnd: () => ""
+					tsrImports: () => "  import { createRootRoute } from \"@tanstack/svelte-router\";",
+					tsrExportStart: () => "export const Route = createRootRoute()(",
+					tsrExportEnd: () => ");"
 				}
 			},
 			route: {
 				template: () => [
+					"<script module lang=\"ts\">\n",
+					"%%tsrImports%%\n",
+					"\n",
+					"  %%tsrExportStart%%{\n",
+					"    // loader: ({ params }) => ...,\n",
+					"    // errorComponent: ({ error }) => `Failed: ${error.message}`,\n",
+					"  }%%tsrExportEnd%%\n",
+					"<\/script>\n\n",
 					"<script lang=\"ts\">\n",
 					"<\/script>\n\n",
 					"<div>Hello \"%%tsrPath%%\"!</div>\n"
 				].join(""),
 				imports: {
-					tsrImports: () => "",
-					tsrExportStart: () => "",
-					tsrExportEnd: () => ""
+					tsrImports: () => "  import { createFileRoute } from \"@tanstack/svelte-router\";",
+					tsrExportStart: () => `export const Route = createFileRoute('%%tsrPath%%')(`,
+					tsrExportEnd: () => ");"
 				}
 			},
 			lazyRoute: {
 				template: () => [
+					"<script module lang=\"ts\">\n",
+					"%%tsrImports%%\n",
+					"\n",
+					"  %%tsrExportStart%%{\n",
+					"    // component: MyComponent,  (defaults to this file)\n",
+					"  }%%tsrExportEnd%%\n",
+					"<\/script>\n\n",
 					"<script lang=\"ts\">\n",
 					"<\/script>\n\n",
 					"<div>Hello \"%%tsrPath%%\"!</div>\n"
 				].join(""),
 				imports: {
-					tsrImports: () => "",
-					tsrExportStart: () => "",
-					tsrExportEnd: () => ""
+					tsrImports: () => "  import { createLazyFileRoute } from \"@tanstack/svelte-router\";",
+					tsrExportStart: () => `export const Route = createLazyFileRoute('%%tsrPath%%')(`,
+					tsrExportEnd: () => ");"
 				}
 			}
 		};

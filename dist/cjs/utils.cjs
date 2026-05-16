@@ -14,9 +14,38 @@ prettier = require_runtime.__toESM(prettier);
 *   - use `default` instead of `Route` / `component` as the export name
 *   - keep the file extension on the import path (Vite/Svelte plugins need it)
 *   - skip the `transform()` step that scans for named exports
+*
+* Svelte-only escape hatch: a `.svelte` file can ALSO expose a `Route` named
+* export from its `<script module>` block (the Svelte 5 module-script primitive
+* compiles to a real ES module export). When that's present, the generator
+* imports the `Route` from the SFC rather than synthesising an empty one —
+* see `extractSvelteModuleScript()` and `RouteNode.hasNamedRouteExport`.
 */
 function isSingleExportRouteFile(filePath) {
 	return filePath.endsWith(".vue") || filePath.endsWith(".svelte");
+}
+/**
+* Extract the `<script module>` block from a Svelte SFC source string.
+*
+* Returns null if the file has no module-level script (i.e. only an instance
+* `<script>` and template). The matched block's content is what the generator
+* runs through `transform()` to find an optional `export const Route = ...`.
+*
+* The `module` attribute can appear in any order with `lang`, `context`, etc.,
+* and the script can be empty. We deliberately scan only for the FIRST module
+* script — Svelte's compiler errors if you write more than one anyway.
+*/
+function extractSvelteModuleScript(source) {
+	const match = /<script\b([^>]*\bmodule\b[^>]*|[^>]*\bcontext\s*=\s*['"]module['"][^>]*)>([\s\S]*?)<\/script>/i.exec(source);
+	if (!match) return null;
+	const fullStart = match.index;
+	const contentStart = source.indexOf(">", fullStart) + 1;
+	const contentEnd = contentStart + match[2].length;
+	return {
+		content: match[2],
+		contentStart,
+		contentEnd
+	};
 }
 /**
 * Prefix map for O(1) parent route lookups.
@@ -589,19 +618,28 @@ function buildFileRoutesByPathInterface(opts) {
   }
 }`;
 }
-function getImportPath(node, config, generatedRouteTreePath) {
-	return replaceBackslash(removeExt(node_path.default.relative(node_path.default.dirname(generatedRouteTreePath), node_path.default.resolve(config.routesDirectory, node.filePath)), config.addExtensions));
+function getImportPath(node, config, generatedRouteTreePath, preserveExtension = false) {
+	const rel = node_path.default.relative(node_path.default.dirname(generatedRouteTreePath), node_path.default.resolve(config.routesDirectory, node.filePath));
+	return replaceBackslash(preserveExtension ? rel : removeExt(rel, config.addExtensions));
 }
 function getImportForRouteNode(node, config, generatedRouteTreePath, root) {
+	const preserveExtension = node.filePath.endsWith(".svelte");
 	let source = "";
-	if (config.importRoutesUsingAbsolutePaths) source = replaceBackslash(removeExt(node_path.default.resolve(root, config.routesDirectory, node.filePath), config.addExtensions));
-	else source = `./${getImportPath(node, config, generatedRouteTreePath)}`;
+	if (config.importRoutesUsingAbsolutePaths) {
+		const abs = node_path.default.resolve(root, config.routesDirectory, node.filePath);
+		source = replaceBackslash(preserveExtension ? abs : removeExt(abs, config.addExtensions));
+	} else source = `./${getImportPath(node, config, generatedRouteTreePath, preserveExtension)}`;
+	const specifiers = [{
+		imported: "Route",
+		local: `${node.variableName}RouteImport`
+	}];
+	if (node.hasNamedRouteExport && node.filePath.endsWith(".svelte")) specifiers.push({
+		imported: "default",
+		local: `${node.variableName}RouteComponent`
+	});
 	return {
 		source,
-		specifiers: [{
-			imported: "Route",
-			local: `${node.variableName}RouteImport`
-		}]
+		specifiers
 	};
 }
 //#endregion
@@ -620,6 +658,7 @@ exports.createTokenRegex = createTokenRegex;
 exports.determineInitialRoutePath = determineInitialRoutePath;
 exports.determineNodePath = determineNodePath;
 exports.escapeRegExp = escapeRegExp;
+exports.extractSvelteModuleScript = extractSvelteModuleScript;
 exports.findParent = findParent;
 exports.format = format;
 exports.getImportForRouteNode = getImportForRouteNode;

@@ -7,8 +7,30 @@ import { ImportDeclaration, RouteNode } from './types.js';
  *   - use `default` instead of `Route` / `component` as the export name
  *   - keep the file extension on the import path (Vite/Svelte plugins need it)
  *   - skip the `transform()` step that scans for named exports
+ *
+ * Svelte-only escape hatch: a `.svelte` file can ALSO expose a `Route` named
+ * export from its `<script module>` block (the Svelte 5 module-script primitive
+ * compiles to a real ES module export). When that's present, the generator
+ * imports the `Route` from the SFC rather than synthesising an empty one —
+ * see `extractSvelteModuleScript()` and `RouteNode.hasNamedRouteExport`.
  */
 export declare function isSingleExportRouteFile(filePath: string): boolean;
+/**
+ * Extract the `<script module>` block from a Svelte SFC source string.
+ *
+ * Returns null if the file has no module-level script (i.e. only an instance
+ * `<script>` and template). The matched block's content is what the generator
+ * runs through `transform()` to find an optional `export const Route = ...`.
+ *
+ * The `module` attribute can appear in any order with `lang`, `context`, etc.,
+ * and the script can be empty. We deliberately scan only for the FIRST module
+ * script — Svelte's compiler errors if you write more than one anyway.
+ */
+export declare function extractSvelteModuleScript(source: string): {
+    content: string;
+    contentStart: number;
+    contentEnd: number;
+} | null;
 /**
  * Prefix map for O(1) parent route lookups.
  * Maps each route path prefix to the route node that owns that prefix.
