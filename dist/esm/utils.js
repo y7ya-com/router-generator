@@ -191,6 +191,102 @@ function hasEscapedLeadingUnderscore(originalSegment) {
 function hasEscapedTrailingUnderscore(originalSegment) {
 	return originalSegment.endsWith("[_]") || originalSegment.endsWith("_]") && isFullyEscapedSegment(originalSegment);
 }
+function countRoutePathSegments(routePath) {
+	const path = routePath ?? "";
+	let count = 0;
+	let inSegment = false;
+	for (let i = 0; i < path.length; i++) {
+		if (path[i] === "/") {
+			inSegment = false;
+			continue;
+		}
+		if (!inSegment) {
+			count++;
+			inSegment = true;
+		}
+	}
+	return count;
+}
+function countSlashSeparatedParts(path) {
+	let count = 1;
+	for (let i = 0; i < path.length; i++) if (path[i] === "/") count++;
+	return count;
+}
+function hasRoutePathSegmentMetadata(metadata) {
+	return !!(metadata?.literalLeadingUnderscore || metadata?.literalTrailingUnderscore);
+}
+function mergeRoutePathSegmentMetadata(current, incoming) {
+	const hasCurrent = hasRoutePathSegmentMetadata(current);
+	const hasIncoming = hasRoutePathSegmentMetadata(incoming);
+	if (!hasCurrent) return hasIncoming ? incoming : void 0;
+	if (!hasIncoming) return current;
+	return {
+		literalLeadingUnderscore: current.literalLeadingUnderscore || incoming.literalLeadingUnderscore,
+		literalTrailingUnderscore: current.literalTrailingUnderscore || incoming.literalTrailingUnderscore
+	};
+}
+function createRoutePathSegmentMetadata(routePath = "/", originalPath) {
+	if (!originalPath) return void 0;
+	const routeSegments = routePath.split("/");
+	const originalSegments = originalPath.split("/");
+	const metadata = new Array(routeSegments.length);
+	let hasMetadata = false;
+	for (let i = 0; i < routeSegments.length; i++) {
+		const segment = routeSegments[i];
+		const originalSegment = originalSegments[i] || "";
+		const literalLeadingUnderscore = segment.startsWith("_") && hasEscapedLeadingUnderscore(originalSegment);
+		const literalTrailingUnderscore = segment.endsWith("_") && hasEscapedTrailingUnderscore(originalSegment);
+		if (!literalLeadingUnderscore && !literalTrailingUnderscore) continue;
+		hasMetadata = true;
+		metadata[i] = {
+			literalLeadingUnderscore: literalLeadingUnderscore || void 0,
+			literalTrailingUnderscore: literalTrailingUnderscore || void 0
+		};
+	}
+	return hasMetadata ? metadata : void 0;
+}
+function createLiteralRoutePathSegmentMetadata(routePath, parent, literalNewSegments = false) {
+	const routeSegments = routePath.split("/");
+	const metadata = new Array(routeSegments.length);
+	const parentDepth = countRoutePathSegments(parent?.routePath);
+	let hasMetadata = false;
+	let depth = 0;
+	for (let i = 0; i < routeSegments.length; i++) {
+		const segment = routeSegments[i];
+		metadata[i] = parent?._routePathSegmentMetadata?.[i];
+		hasMetadata ||= hasRoutePathSegmentMetadata(metadata[i]);
+		if (!segment) continue;
+		if (literalNewSegments && depth >= parentDepth) {
+			const literalLeadingUnderscore = segment.startsWith("_");
+			const literalTrailingUnderscore = segment.endsWith("_");
+			if (literalLeadingUnderscore || literalTrailingUnderscore) {
+				metadata[i] = mergeRoutePathSegmentMetadata(metadata[i], {
+					literalLeadingUnderscore: literalLeadingUnderscore || void 0,
+					literalTrailingUnderscore: literalTrailingUnderscore || void 0
+				});
+				hasMetadata = true;
+			}
+		}
+		depth++;
+	}
+	return hasMetadata ? metadata : void 0;
+}
+function joinRoutePathSegmentMetadata(routePath, prefixPath, prefixMetadata, childMetadata) {
+	const metadata = new Array(countSlashSeparatedParts(routePath));
+	let hasMetadata = false;
+	if (prefixMetadata) for (let i = 0; i < prefixMetadata.length && i < metadata.length; i++) {
+		metadata[i] = prefixMetadata[i];
+		hasMetadata ||= hasRoutePathSegmentMetadata(metadata[i]);
+	}
+	const offset = countRoutePathSegments(prefixPath);
+	if (childMetadata) for (let i = 1; i < childMetadata.length; i++) {
+		const targetIndex = offset + i;
+		if (targetIndex >= metadata.length) break;
+		metadata[targetIndex] = mergeRoutePathSegmentMetadata(metadata[targetIndex], childMetadata[i]);
+		hasMetadata ||= hasRoutePathSegmentMetadata(metadata[targetIndex]);
+	}
+	return hasMetadata ? metadata : void 0;
+}
 var backslashRegex = /\\/g;
 function replaceBackslash(s) {
 	return s.replace(backslashRegex, "/");
@@ -231,44 +327,26 @@ var underscoreSlashRegex = /(\/_|_\/)/gi;
 function removeUnderscores(s) {
 	return s?.replace(underscoreStartEndRegex, "").replace(underscoreSlashRegex, "/");
 }
-/**
-* Removes underscores from a path, but preserves underscores that were escaped
-* in the original path (indicated by [_] syntax).
-*
-* @param routePath - The path with brackets removed
-* @param originalPath - The original path that may contain [_] escape sequences
-* @returns The path with non-escaped underscores removed
-*/
-function removeUnderscoresWithEscape(routePath, originalPath) {
-	if (!routePath) return "";
-	if (!originalPath) return removeUnderscores(routePath) ?? "";
-	const routeSegments = routePath.split("/");
-	const originalSegments = originalPath.split("/");
-	return routeSegments.map((segment, i) => {
-		const originalSegment = originalSegments[i] || "";
-		const leadingEscaped = hasEscapedLeadingUnderscore(originalSegment);
-		const trailingEscaped = hasEscapedTrailingUnderscore(originalSegment);
-		let result = segment;
-		if (result.startsWith("_") && !leadingEscaped) result = result.slice(1);
-		if (result.endsWith("_") && !trailingEscaped) result = result.slice(0, -1);
-		return result;
-	}).join("/");
+function removeUnderscoresFromSegment(segment, metadata) {
+	let result = segment;
+	if (result.startsWith("_") && !metadata?.literalLeadingUnderscore) result = result.slice(1);
+	if (result.endsWith("_") && !metadata?.literalTrailingUnderscore) result = result.slice(0, -1);
+	return result;
 }
-/**
-* Removes layout segments (segments starting with underscore) from a path,
-* but preserves segments where the underscore was escaped.
-*
-* @param routePath - The path with brackets removed
-* @param originalPath - The original path that may contain [_] escape sequences
-* @returns The path with non-escaped layout segments removed
-*/
-function removeLayoutSegmentsWithEscape(routePath = "/", originalPath) {
-	if (!originalPath) return removeLayoutSegments(routePath);
+function removeLayoutSegmentsAndUnderscoresWithEscape(routePath = "/", originalPath, routePathSegmentMetadata) {
+	if (!originalPath) return removeUnderscores(removeLayoutSegments(routePath)) ?? "";
+	const metadata = routePathSegmentMetadata ?? createRoutePathSegmentMetadata(routePath, originalPath);
 	const routeSegments = routePath.split("/");
 	const originalSegments = originalPath.split("/");
-	return routeSegments.filter((segment, i) => {
-		return !isSegmentPathless(segment, originalSegments[i] || "");
-	}).join("/");
+	const newSegments = [];
+	for (let i = 0; i < routeSegments.length; i++) {
+		const segment = routeSegments[i];
+		const originalSegment = originalSegments[i] || "";
+		const segmentMetadata = metadata?.[i];
+		if (!segmentMetadata?.literalLeadingUnderscore && isSegmentPathless(segment, originalSegment)) continue;
+		newSegments.push(removeUnderscoresFromSegment(segment, segmentMetadata));
+	}
+	return newSegments.join("/");
 }
 /**
 * Checks if a segment should be treated as a pathless/layout segment.
@@ -447,13 +525,31 @@ var inferPath = (routeNode) => {
 * Infers the full path for use by TS
 */
 var inferFullPath = (routeNode) => {
-	const fullPath = removeGroups(removeUnderscoresWithEscape(removeLayoutSegmentsWithEscape(routeNode.routePath, routeNode.originalRoutePath), routeNode.originalRoutePath));
+	const fullPath = removeGroups(removeLayoutSegmentsAndUnderscoresWithEscape(routeNode.routePath, routeNode.originalRoutePath, routeNode._routePathSegmentMetadata));
 	if (fullPath === "") return "/";
 	if (routeNode.routePath?.endsWith("/")) return fullPath;
 	return fullPath.replace(/\/$/, "");
 };
 var shouldPreferIndexRoute = (current, existing) => {
 	return existing.cleanedPath === "/" && current.cleanedPath !== "/";
+};
+var isIndexRouteNode = (routeNode) => {
+	return routeNode.routePath?.endsWith("/") ?? false;
+};
+var isPathlessRouteNode = (routeNode) => {
+	return routeNode._fsRouteType === "pathless_layout";
+};
+var shouldReplaceRouteNodeForTo = (current, existing) => {
+	const currentIsIndex = isIndexRouteNode(current);
+	if (currentIsIndex !== isIndexRouteNode(existing)) return currentIsIndex;
+	const currentIsPathless = isPathlessRouteNode(current);
+	if (currentIsPathless !== isPathlessRouteNode(existing)) return !currentIsPathless;
+	return true;
+};
+var shouldReplaceRouteNodeForFullPath = (current, existing) => {
+	const currentIsPathless = isPathlessRouteNode(current);
+	if (currentIsPathless !== isPathlessRouteNode(existing)) return !currentIsPathless;
+	return true;
 };
 /**
 * Creates a map from fullPath to routeNode
@@ -465,6 +561,8 @@ var createRouteNodesByFullPath = (routeNodes) => {
 		if (fullPath === "/" && map.has("/")) {
 			if (shouldPreferIndexRoute(routeNode, map.get("/"))) continue;
 		}
+		const existing = map.get(fullPath);
+		if (existing && !shouldReplaceRouteNodeForFullPath(routeNode, existing)) continue;
 		map.set(fullPath, routeNode);
 	}
 	return map;
@@ -476,9 +574,8 @@ var createRouteNodesByTo = (routeNodes) => {
 	const map = /* @__PURE__ */ new Map();
 	for (const routeNode of dedupeBranchesAndIndexRoutes(routeNodes)) {
 		const to = inferTo(routeNode);
-		if (to === "/" && map.has("/")) {
-			if (shouldPreferIndexRoute(routeNode, map.get("/"))) continue;
-		}
+		const existing = map.get(to);
+		if (existing && !shouldReplaceRouteNodeForTo(routeNode, existing)) continue;
 		map.set(to, routeNode);
 	}
 	return map;
@@ -639,6 +736,6 @@ function getImportForRouteNode(node, config, generatedRouteTreePath, root) {
 	};
 }
 //#endregion
-export { RoutePrefixMap, buildFileRoutesByPathInterface, buildImportString, buildRouteTreeConfig, capitalize, checkFileExists, checkRouteFullPathUniqueness, cleanPath, createRouteNodesByFullPath, createRouteNodesById, createRouteNodesByTo, createTokenRegex, determineInitialRoutePath, determineNodePath, escapeRegExp, extractSvelteModuleScript, findParent, format, getImportForRouteNode, getResolvedRouteNodeVariableName, hasEscapedLeadingUnderscore, hasParentRoute, inferFullPath, isSegmentPathless, isSingleExportRouteFile, mergeImportDeclarations, multiSortBy, removeExt, removeGroups, removeLastSegmentFromPath, removeLayoutSegmentsWithEscape, removeLeadingSlash, removeTrailingSlash, removeUnderscores, removeUnderscoresWithEscape, replaceBackslash, resetRegex, routePathToVariable, trimPathLeft, unwrapBracketWrappedSegment, writeIfDifferent };
+export { RoutePrefixMap, buildFileRoutesByPathInterface, buildImportString, buildRouteTreeConfig, capitalize, checkFileExists, checkRouteFullPathUniqueness, cleanPath, countRoutePathSegments, countSlashSeparatedParts, createLiteralRoutePathSegmentMetadata, createRouteNodesByFullPath, createRouteNodesById, createRouteNodesByTo, createRoutePathSegmentMetadata, createTokenRegex, determineInitialRoutePath, determineNodePath, escapeRegExp, extractSvelteModuleScript, findParent, format, getImportForRouteNode, getResolvedRouteNodeVariableName, hasEscapedLeadingUnderscore, hasParentRoute, inferFullPath, isSegmentPathless, isSingleExportRouteFile, joinRoutePathSegmentMetadata, mergeImportDeclarations, multiSortBy, removeExt, removeGroups, removeLastSegmentFromPath, removeLayoutSegmentsAndUnderscoresWithEscape, removeLeadingSlash, removeTrailingSlash, removeUnderscores, replaceBackslash, resetRegex, routePathToVariable, trimPathLeft, unwrapBracketWrappedSegment, writeIfDifferent };
 
 //# sourceMappingURL=utils.js.map

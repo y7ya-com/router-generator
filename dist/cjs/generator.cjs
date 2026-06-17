@@ -8,14 +8,30 @@ const require_template = require("./template.cjs");
 const require_transform = require("./transform/transform.cjs");
 const require_validate_route_params = require("./validate-route-params.cjs");
 let node_path = require("node:path");
-node_path = require_runtime.__toESM(node_path);
+node_path = require_runtime.__toESM(node_path, 1);
 let node_fs = require("node:fs");
 let node_fs_promises = require("node:fs/promises");
-node_fs_promises = require_runtime.__toESM(node_fs_promises);
+node_fs_promises = require_runtime.__toESM(node_fs_promises, 1);
 let node_crypto = require("node:crypto");
-node_crypto = require_runtime.__toESM(node_crypto);
+node_crypto = require_runtime.__toESM(node_crypto, 1);
 let _tanstack_router_core = require("@tanstack/router-core");
 //#region src/generator.ts
+function getRoutePathSegmentMetadataForPath(node, routePath, parentRoutePath) {
+	if (!node._routePathSegmentMetadata) return void 0;
+	const segments = routePath.split("/");
+	const result = new Array(segments.length);
+	const parentSegmentCount = require_utils.countRoutePathSegments(parentRoutePath);
+	let hasMetadata = false;
+	let segmentCount = 0;
+	for (let i = 0; i < segments.length; i++) {
+		if (!segments[i]) continue;
+		const sourceIndex = parentSegmentCount + segmentCount + 1;
+		result[i] = node._routePathSegmentMetadata[sourceIndex];
+		hasMetadata ||= !!result[i];
+		segmentCount++;
+	}
+	return hasMetadata ? result : void 0;
+}
 var DefaultFileSystem = {
 	stat: async (filePath) => {
 		const res = await node_fs_promises.stat(filePath, { bigint: true });
@@ -157,7 +173,7 @@ var Generator = class Generator {
 		await this.handleRootNode(rootRouteNode);
 		const preRouteNodes = require_utils.multiSortBy(beforeRouteNodes, [
 			(d) => d.routePath === "/" ? -1 : 1,
-			(d) => d.routePath?.split("/").length,
+			(d) => d.routePath === void 0 ? void 0 : require_utils.countSlashSeparatedParts(d.routePath),
 			(d) => d.filePath.match(this.indexTokenFilenameRegex) ? 1 : -1,
 			(d) => d.filePath.match(Generator.componentPieceRegex) ? 1 : -1,
 			(d) => d.filePath.match(this.routeTokenFilenameRegex) ? -1 : 1,
@@ -277,7 +293,7 @@ var Generator = class Generator {
 		const indexTokenSegmentRegex = config.indexToken === this.config.indexToken ? this.indexTokenSegmentRegex : require_utils.createTokenRegex(config.indexToken, { type: "segment" });
 		const sortedRouteNodes = require_utils.multiSortBy(acc.routeNodes, [
 			(d) => d.routePath?.includes(`/__root`) ? -1 : 1,
-			(d) => d.routePath?.split("/").length,
+			(d) => d.routePath === void 0 ? void 0 : require_utils.countSlashSeparatedParts(d.routePath),
 			(d) => {
 				const segments = d.routePath?.split("/").filter(Boolean) ?? [];
 				const last = segments[segments.length - 1] ?? "";
@@ -727,11 +743,16 @@ ${acc.routeTree.map((child) => `${child.variableName}Route: typeof ${require_uti
 		if (parentRoute) node.parent = parentRoute;
 		node.path = require_utils.determineNodePath(node);
 		const trimmedPath = require_utils.trimPathLeft(node.path ?? "");
-		const trimmedOriginalPath = require_utils.trimPathLeft(node.originalRoutePath?.replace(node.parent?.originalRoutePath ?? "", "") ?? "");
+		const originalPath = node.originalRoutePath && node.parent?.originalRoutePath ? node.originalRoutePath.replace(node.parent.originalRoutePath, "") || "/" : node.originalRoutePath;
+		const routePathSegmentMetadata = getRoutePathSegmentMetadataForPath(node, node.path ?? "/", node.parent?.routePath);
+		const trimmedOriginalPath = require_utils.trimPathLeft(originalPath ?? "");
 		const split = trimmedPath.split("/");
+		const pathSplit = (node.path ?? "").split("/");
 		const originalSplit = trimmedOriginalPath.split("/");
-		node.isNonPath = require_utils.isSegmentPathless(split[split.length - 1] ?? trimmedPath, originalSplit[originalSplit.length - 1] ?? trimmedOriginalPath) || split.every((part) => this.routeGroupPatternRegex.test(part));
-		node.cleanedPath = require_utils.removeGroups(require_utils.removeUnderscoresWithEscape(require_utils.removeLayoutSegmentsWithEscape(node.path, node.originalRoutePath), node.originalRoutePath));
+		const lastRouteSegment = split[split.length - 1] ?? trimmedPath;
+		const lastOriginalSegment = originalSplit[originalSplit.length - 1] ?? trimmedOriginalPath;
+		node.isNonPath = !(routePathSegmentMetadata?.[pathSplit.length - 1])?.literalLeadingUnderscore && require_utils.isSegmentPathless(lastRouteSegment, lastOriginalSegment) || split.every((part) => this.routeGroupPatternRegex.test(part));
+		node.cleanedPath = require_utils.removeGroups(require_utils.removeLayoutSegmentsAndUnderscoresWithEscape(node.path, originalPath, routePathSegmentMetadata));
 		if (node._fsRouteType === "layout" || node._fsRouteType === "pathless_layout") node.cleanedPath = require_utils.removeTrailingSlash(node.cleanedPath);
 		if (!node.isVirtual && [
 			"lazy",
@@ -762,8 +783,7 @@ ${acc.routeTree.map((child) => `${child.variableName}Route: typeof ${require_uti
 					node.parent = candidate;
 					node.path = node.routePath?.replace(candidate.routePath ?? "", "") || "/";
 					const pathRelativeToParent = immediateParentPath.replace(candidate.routePath ?? "", "") || "/";
-					const originalPathRelativeToParent = immediateParentOriginalPath.replace(candidate.originalRoutePath ?? "", "") || "/";
-					node.cleanedPath = require_utils.removeGroups(require_utils.removeUnderscoresWithEscape(require_utils.removeLayoutSegmentsWithEscape(pathRelativeToParent, originalPathRelativeToParent), originalPathRelativeToParent));
+					node.cleanedPath = require_utils.removeGroups(require_utils.removeLayoutSegmentsAndUnderscoresWithEscape(pathRelativeToParent, immediateParentOriginalPath.replace(candidate.originalRoutePath ?? "", "") || "/", getRoutePathSegmentMetadataForPath(node, pathRelativeToParent, candidate.routePath)));
 					break;
 				}
 				if (searchPath === "/") break;

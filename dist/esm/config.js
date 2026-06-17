@@ -50,7 +50,7 @@ var configSchema = baseConfigSchema.extend({
 	disableTypes: z.boolean().optional().default(false),
 	addExtensions: z.union([z.boolean(), z.string()]).optional().default(false).transform((v) => typeof v === "string" ? v.startsWith(".") ? v : `.${v}` : v),
 	enableRouteTreeFormatting: z.boolean().optional().default(true),
-	routeTreeFileFooter: z.union([z.array(z.string()).optional().default([]), z.function().returns(z.array(z.string()))]).optional(),
+	routeTreeFileFooter: z.union([z.array(z.string()).optional().default([]), z.custom((value) => typeof value === "function")]).optional(),
 	autoCodeSplitting: z.boolean().optional(),
 	customScaffolding: z.object({
 		routeTemplate: z.string().optional(),

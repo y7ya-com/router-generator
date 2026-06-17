@@ -1,8 +1,8 @@
 const require_runtime = require("../_virtual/_rolldown/runtime.cjs");
 let magic_string = require("magic-string");
-magic_string = require_runtime.__toESM(magic_string);
+magic_string = require_runtime.__toESM(magic_string, 1);
 let _babel_types = require("@babel/types");
-_babel_types = require_runtime.__toESM(_babel_types);
+_babel_types = require_runtime.__toESM(_babel_types, 1);
 let _tanstack_router_utils = require("@tanstack/router-utils");
 //#region src/transform/transform.ts
 var routeConstructors = ["createFileRoute", "createLazyFileRoute"];

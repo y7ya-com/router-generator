@@ -5,9 +5,9 @@ const require_utils = require("../../utils.cjs");
 const require_loadConfigFile = require("../virtual/loadConfigFile.cjs");
 const require_getRouteNodes = require("../virtual/getRouteNodes.cjs");
 let node_path = require("node:path");
-node_path = require_runtime.__toESM(node_path);
+node_path = require_runtime.__toESM(node_path, 1);
 let node_fs_promises = require("node:fs/promises");
-node_fs_promises = require_runtime.__toESM(node_fs_promises);
+node_fs_promises = require_runtime.__toESM(node_fs_promises, 1);
 //#region src/filesystem/physical/getRouteNodes.ts
 var disallowedRouteGroupConfiguration = /\(([^)]+)\).(ts|js|tsx|jsx|vue|svelte)/;
 var virtualConfigFileRegExp = /__virtual\.[mc]?[jt]s$/;
@@ -54,10 +54,15 @@ async function getRouteNodes(config, root, tokenRegexes) {
 			virtualRouteNodes.forEach((node) => {
 				const normalizedDir = dir === "./" ? "" : dir;
 				const filePath = require_utils.replaceBackslash(node_path.default.join(normalizedDir, node.filePath));
-				const routePath = require_utils.cleanPath(`/${normalizedDir}${node.routePath}`);
-				node.variableName = require_utils.routePathToVariable(require_utils.cleanPath(`/${normalizedDir}/${require_utils.removeExt(node.filePath)}`));
+				const { routePath: prefixPath, originalRoutePath: originalPrefixPath } = normalizedDir ? require_utils.determineInitialRoutePath(normalizedDir) : {
+					routePath: "",
+					originalRoutePath: ""
+				};
+				const routePath = require_utils.cleanPath(`${prefixPath}${node.routePath}`);
+				node.variableName = require_utils.routePathToVariable(require_utils.cleanPath(`${prefixPath}/${require_utils.removeExt(node.filePath)}`));
+				node._routePathSegmentMetadata = require_utils.joinRoutePathSegmentMetadata(routePath, prefixPath, require_utils.createRoutePathSegmentMetadata(prefixPath, originalPrefixPath), node._routePathSegmentMetadata);
 				node.routePath = routePath;
-				if (node.originalRoutePath) node.originalRoutePath = require_utils.cleanPath(`/${normalizedDir}${node.originalRoutePath}`);
+				if (node.originalRoutePath) node.originalRoutePath = require_utils.cleanPath(`${originalPrefixPath}${node.originalRoutePath}`);
 				node.filePath = filePath;
 				delete node._virtualParentRoutePath;
 			});
@@ -132,7 +137,6 @@ async function getRouteNodes(config, root, tokenRegexes) {
 					const updatedLastRouteSegment = updatedRouteSegments[updatedRouteSegments.length - 1] || "";
 					if (indexTokenSegmentRegex.test(updatedLastRouteSegment)) {
 						if (routePathSegments.length === 1) routePath = "/";
-						if (lastOriginalSegment === updatedLastRouteSegment) originalRoutePath = "/";
 						const isLayoutRoute = routeType === "layout";
 						routePath = routePath.replace(new RegExp(`/${require_utils.escapeRegExp(updatedLastRouteSegment)}$`), "/") || (isLayoutRoute ? "" : "/");
 						originalRoutePath = originalRoutePath.replace(new RegExp(`/${require_utils.escapeRegExp(indexTokenCandidate)}$`), "/") || (isLayoutRoute ? "" : "/");
@@ -144,7 +148,8 @@ async function getRouteNodes(config, root, tokenRegexes) {
 					routePath,
 					variableName,
 					_fsRouteType: routeType,
-					originalRoutePath
+					originalRoutePath,
+					_routePathSegmentMetadata: require_utils.createRoutePathSegmentMetadata(routePath, originalRoutePath)
 				});
 			}
 		}));

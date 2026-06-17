@@ -1,6 +1,6 @@
 import { logging } from "./logger.js";
 import { rootPathId } from "./filesystem/physical/rootPathId.js";
-import { RoutePrefixMap, buildFileRoutesByPathInterface, buildImportString, buildRouteTreeConfig, checkFileExists, checkRouteFullPathUniqueness, createRouteNodesByFullPath, createRouteNodesById, createRouteNodesByTo, createTokenRegex, determineNodePath, extractSvelteModuleScript, findParent, format, getImportForRouteNode, getResolvedRouteNodeVariableName, hasParentRoute, isSegmentPathless, isSingleExportRouteFile, mergeImportDeclarations, multiSortBy, removeExt, removeGroups, removeLastSegmentFromPath, removeLayoutSegmentsWithEscape, removeTrailingSlash, removeUnderscoresWithEscape, replaceBackslash, trimPathLeft } from "./utils.js";
+import { RoutePrefixMap, buildFileRoutesByPathInterface, buildImportString, buildRouteTreeConfig, checkFileExists, checkRouteFullPathUniqueness, countRoutePathSegments, countSlashSeparatedParts, createRouteNodesByFullPath, createRouteNodesById, createRouteNodesByTo, createTokenRegex, determineNodePath, extractSvelteModuleScript, findParent, format, getImportForRouteNode, getResolvedRouteNodeVariableName, hasParentRoute, isSegmentPathless, isSingleExportRouteFile, mergeImportDeclarations, multiSortBy, removeExt, removeGroups, removeLastSegmentFromPath, removeLayoutSegmentsAndUnderscoresWithEscape, removeTrailingSlash, replaceBackslash, trimPathLeft } from "./utils.js";
 import { getRouteNodes } from "./filesystem/virtual/getRouteNodes.js";
 import { getRouteNodes as getRouteNodes$1, isVirtualConfigFile } from "./filesystem/physical/getRouteNodes.js";
 import { fillTemplate, getTargetTemplate } from "./template.js";
@@ -12,6 +12,22 @@ import * as fsp from "node:fs/promises";
 import crypto from "node:crypto";
 import { rootRouteId } from "@tanstack/router-core";
 //#region src/generator.ts
+function getRoutePathSegmentMetadataForPath(node, routePath, parentRoutePath) {
+	if (!node._routePathSegmentMetadata) return void 0;
+	const segments = routePath.split("/");
+	const result = new Array(segments.length);
+	const parentSegmentCount = countRoutePathSegments(parentRoutePath);
+	let hasMetadata = false;
+	let segmentCount = 0;
+	for (let i = 0; i < segments.length; i++) {
+		if (!segments[i]) continue;
+		const sourceIndex = parentSegmentCount + segmentCount + 1;
+		result[i] = node._routePathSegmentMetadata[sourceIndex];
+		hasMetadata ||= !!result[i];
+		segmentCount++;
+	}
+	return hasMetadata ? result : void 0;
+}
 var DefaultFileSystem = {
 	stat: async (filePath) => {
 		const res = await fsp.stat(filePath, { bigint: true });
@@ -153,7 +169,7 @@ var Generator = class Generator {
 		await this.handleRootNode(rootRouteNode);
 		const preRouteNodes = multiSortBy(beforeRouteNodes, [
 			(d) => d.routePath === "/" ? -1 : 1,
-			(d) => d.routePath?.split("/").length,
+			(d) => d.routePath === void 0 ? void 0 : countSlashSeparatedParts(d.routePath),
 			(d) => d.filePath.match(this.indexTokenFilenameRegex) ? 1 : -1,
 			(d) => d.filePath.match(Generator.componentPieceRegex) ? 1 : -1,
 			(d) => d.filePath.match(this.routeTokenFilenameRegex) ? -1 : 1,
@@ -273,7 +289,7 @@ var Generator = class Generator {
 		const indexTokenSegmentRegex = config.indexToken === this.config.indexToken ? this.indexTokenSegmentRegex : createTokenRegex(config.indexToken, { type: "segment" });
 		const sortedRouteNodes = multiSortBy(acc.routeNodes, [
 			(d) => d.routePath?.includes(`/__root`) ? -1 : 1,
-			(d) => d.routePath?.split("/").length,
+			(d) => d.routePath === void 0 ? void 0 : countSlashSeparatedParts(d.routePath),
 			(d) => {
 				const segments = d.routePath?.split("/").filter(Boolean) ?? [];
 				const last = segments[segments.length - 1] ?? "";
@@ -723,11 +739,16 @@ ${acc.routeTree.map((child) => `${child.variableName}Route: typeof ${getResolved
 		if (parentRoute) node.parent = parentRoute;
 		node.path = determineNodePath(node);
 		const trimmedPath = trimPathLeft(node.path ?? "");
-		const trimmedOriginalPath = trimPathLeft(node.originalRoutePath?.replace(node.parent?.originalRoutePath ?? "", "") ?? "");
+		const originalPath = node.originalRoutePath && node.parent?.originalRoutePath ? node.originalRoutePath.replace(node.parent.originalRoutePath, "") || "/" : node.originalRoutePath;
+		const routePathSegmentMetadata = getRoutePathSegmentMetadataForPath(node, node.path ?? "/", node.parent?.routePath);
+		const trimmedOriginalPath = trimPathLeft(originalPath ?? "");
 		const split = trimmedPath.split("/");
+		const pathSplit = (node.path ?? "").split("/");
 		const originalSplit = trimmedOriginalPath.split("/");
-		node.isNonPath = isSegmentPathless(split[split.length - 1] ?? trimmedPath, originalSplit[originalSplit.length - 1] ?? trimmedOriginalPath) || split.every((part) => this.routeGroupPatternRegex.test(part));
-		node.cleanedPath = removeGroups(removeUnderscoresWithEscape(removeLayoutSegmentsWithEscape(node.path, node.originalRoutePath), node.originalRoutePath));
+		const lastRouteSegment = split[split.length - 1] ?? trimmedPath;
+		const lastOriginalSegment = originalSplit[originalSplit.length - 1] ?? trimmedOriginalPath;
+		node.isNonPath = !(routePathSegmentMetadata?.[pathSplit.length - 1])?.literalLeadingUnderscore && isSegmentPathless(lastRouteSegment, lastOriginalSegment) || split.every((part) => this.routeGroupPatternRegex.test(part));
+		node.cleanedPath = removeGroups(removeLayoutSegmentsAndUnderscoresWithEscape(node.path, originalPath, routePathSegmentMetadata));
 		if (node._fsRouteType === "layout" || node._fsRouteType === "pathless_layout") node.cleanedPath = removeTrailingSlash(node.cleanedPath);
 		if (!node.isVirtual && [
 			"lazy",
@@ -758,8 +779,7 @@ ${acc.routeTree.map((child) => `${child.variableName}Route: typeof ${getResolved
 					node.parent = candidate;
 					node.path = node.routePath?.replace(candidate.routePath ?? "", "") || "/";
 					const pathRelativeToParent = immediateParentPath.replace(candidate.routePath ?? "", "") || "/";
-					const originalPathRelativeToParent = immediateParentOriginalPath.replace(candidate.originalRoutePath ?? "", "") || "/";
-					node.cleanedPath = removeGroups(removeUnderscoresWithEscape(removeLayoutSegmentsWithEscape(pathRelativeToParent, originalPathRelativeToParent), originalPathRelativeToParent));
+					node.cleanedPath = removeGroups(removeLayoutSegmentsAndUnderscoresWithEscape(pathRelativeToParent, immediateParentOriginalPath.replace(candidate.originalRoutePath ?? "", "") || "/", getRoutePathSegmentMetadataForPath(node, pathRelativeToParent, candidate.routePath)));
 					break;
 				}
 				if (searchPath === "/") break;

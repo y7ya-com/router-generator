@@ -1,6 +1,6 @@
 import { logging } from "../../logger.js";
 import "./rootPathId.js";
-import { cleanPath, determineInitialRoutePath, escapeRegExp, hasEscapedLeadingUnderscore, removeExt, replaceBackslash, routePathToVariable, unwrapBracketWrappedSegment } from "../../utils.js";
+import { cleanPath, createRoutePathSegmentMetadata, determineInitialRoutePath, escapeRegExp, hasEscapedLeadingUnderscore, joinRoutePathSegmentMetadata, removeExt, replaceBackslash, routePathToVariable, unwrapBracketWrappedSegment } from "../../utils.js";
 import { loadConfigFile } from "../virtual/loadConfigFile.js";
 import { getRouteNodes as getRouteNodes$1 } from "../virtual/getRouteNodes.js";
 import path from "node:path";
@@ -51,10 +51,15 @@ async function getRouteNodes(config, root, tokenRegexes) {
 			virtualRouteNodes.forEach((node) => {
 				const normalizedDir = dir === "./" ? "" : dir;
 				const filePath = replaceBackslash(path.join(normalizedDir, node.filePath));
-				const routePath = cleanPath(`/${normalizedDir}${node.routePath}`);
-				node.variableName = routePathToVariable(cleanPath(`/${normalizedDir}/${removeExt(node.filePath)}`));
+				const { routePath: prefixPath, originalRoutePath: originalPrefixPath } = normalizedDir ? determineInitialRoutePath(normalizedDir) : {
+					routePath: "",
+					originalRoutePath: ""
+				};
+				const routePath = cleanPath(`${prefixPath}${node.routePath}`);
+				node.variableName = routePathToVariable(cleanPath(`${prefixPath}/${removeExt(node.filePath)}`));
+				node._routePathSegmentMetadata = joinRoutePathSegmentMetadata(routePath, prefixPath, createRoutePathSegmentMetadata(prefixPath, originalPrefixPath), node._routePathSegmentMetadata);
 				node.routePath = routePath;
-				if (node.originalRoutePath) node.originalRoutePath = cleanPath(`/${normalizedDir}${node.originalRoutePath}`);
+				if (node.originalRoutePath) node.originalRoutePath = cleanPath(`${originalPrefixPath}${node.originalRoutePath}`);
 				node.filePath = filePath;
 				delete node._virtualParentRoutePath;
 			});
@@ -129,7 +134,6 @@ async function getRouteNodes(config, root, tokenRegexes) {
 					const updatedLastRouteSegment = updatedRouteSegments[updatedRouteSegments.length - 1] || "";
 					if (indexTokenSegmentRegex.test(updatedLastRouteSegment)) {
 						if (routePathSegments.length === 1) routePath = "/";
-						if (lastOriginalSegment === updatedLastRouteSegment) originalRoutePath = "/";
 						const isLayoutRoute = routeType === "layout";
 						routePath = routePath.replace(new RegExp(`/${escapeRegExp(updatedLastRouteSegment)}$`), "/") || (isLayoutRoute ? "" : "/");
 						originalRoutePath = originalRoutePath.replace(new RegExp(`/${escapeRegExp(indexTokenCandidate)}$`), "/") || (isLayoutRoute ? "" : "/");
@@ -141,7 +145,8 @@ async function getRouteNodes(config, root, tokenRegexes) {
 					routePath,
 					variableName,
 					_fsRouteType: routeType,
-					originalRoutePath
+					originalRoutePath,
+					_routePathSegmentMetadata: createRoutePathSegmentMetadata(routePath, originalRoutePath)
 				});
 			}
 		}));

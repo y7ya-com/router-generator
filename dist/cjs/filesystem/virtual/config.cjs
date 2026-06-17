@@ -1,4 +1,3 @@
-require("../../_virtual/_rolldown/runtime.cjs");
 let zod = require("zod");
 //#region src/filesystem/virtual/config.ts
 var indexRouteSchema = zod.z.object({

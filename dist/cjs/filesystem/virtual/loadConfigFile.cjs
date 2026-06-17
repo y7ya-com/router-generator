@@ -1,4 +1,3 @@
-require("../../_virtual/_rolldown/runtime.cjs");
 let jiti = require("jiti");
 //#region src/filesystem/virtual/loadConfigFile.ts
 async function loadConfigFile(filePath) {
