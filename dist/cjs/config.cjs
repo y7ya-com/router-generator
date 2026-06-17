@@ -1,7 +1,7 @@
 const require_runtime = require("./_virtual/_rolldown/runtime.cjs");
 const require_config = require("./filesystem/virtual/config.cjs");
 let node_path = require("node:path");
-node_path = require_runtime.__toESM(node_path);
+node_path = require_runtime.__toESM(node_path, 1);
 let node_fs = require("node:fs");
 let zod = require("zod");
 //#region src/config.ts
@@ -52,7 +52,7 @@ var configSchema = baseConfigSchema.extend({
 	disableTypes: zod.z.boolean().optional().default(false),
 	addExtensions: zod.z.union([zod.z.boolean(), zod.z.string()]).optional().default(false).transform((v) => typeof v === "string" ? v.startsWith(".") ? v : `.${v}` : v),
 	enableRouteTreeFormatting: zod.z.boolean().optional().default(true),
-	routeTreeFileFooter: zod.z.union([zod.z.array(zod.z.string()).optional().default([]), zod.z.function().returns(zod.z.array(zod.z.string()))]).optional(),
+	routeTreeFileFooter: zod.z.union([zod.z.array(zod.z.string()).optional().default([]), zod.z.custom((value) => typeof value === "function")]).optional(),
 	autoCodeSplitting: zod.z.boolean().optional(),
 	customScaffolding: zod.z.object({
 		routeTemplate: zod.z.string().optional(),

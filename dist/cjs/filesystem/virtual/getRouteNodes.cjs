@@ -5,7 +5,7 @@ const require_utils = require("../../utils.cjs");
 const require_loadConfigFile = require("./loadConfigFile.cjs");
 const require_getRouteNodes = require("../physical/getRouteNodes.cjs");
 let node_path = require("node:path");
-node_path = require_runtime.__toESM(node_path);
+node_path = require_runtime.__toESM(node_path, 1);
 //#region src/filesystem/virtual/getRouteNodes.ts
 function ensureLeadingUnderScore(id) {
 	if (id.startsWith("_")) return id;
@@ -68,15 +68,24 @@ async function getRouteNodesRecursive(tsrConfig, root, fullDir, nodes, tokenRege
 	return {
 		children: (await Promise.all(nodes.map(async (node) => {
 			if (node.type === "physical") {
+				const { routePath: routePathPrefix, originalRoutePath: originalRoutePathPrefix } = node.pathPrefix ? require_utils.determineInitialRoutePath(require_utils.removeLeadingSlash(node.pathPrefix)) : {
+					routePath: "",
+					originalRoutePath: ""
+				};
 				const { routeNodes, physicalDirectories } = await require_getRouteNodes.getRouteNodes({
 					...tsrConfig,
 					routesDirectory: (0, node_path.resolve)(fullDir, node.directory)
 				}, root, tokenRegexes);
 				allPhysicalDirectories.push((0, node_path.resolve)(fullDir, node.directory), ...physicalDirectories);
 				routeNodes.forEach((subtreeNode) => {
-					subtreeNode.variableName = require_utils.routePathToVariable(`${node.pathPrefix}/${require_utils.removeExt(subtreeNode.filePath)}`);
-					subtreeNode.routePath = require_utils.cleanPath(`${parent?.routePath ?? ""}${node.pathPrefix}${subtreeNode.routePath}`);
-					if (subtreeNode.originalRoutePath) subtreeNode.originalRoutePath = require_utils.cleanPath(`${parent?.routePath ?? ""}${node.pathPrefix}${subtreeNode.originalRoutePath}`);
+					const pathPrefix = require_utils.cleanPath(`${parent?.routePath ?? ""}${routePathPrefix}`);
+					const originalPathPrefix = require_utils.cleanPath(`${parent?.originalRoutePath ?? parent?.routePath ?? ""}${originalRoutePathPrefix}`);
+					const literalPathPrefixSegments = require_utils.createLiteralRoutePathSegmentMetadata(pathPrefix, parent, true);
+					const routePath = require_utils.cleanPath(`${pathPrefix}${subtreeNode.routePath}`);
+					subtreeNode.variableName = require_utils.routePathToVariable(`${routePathPrefix}/${require_utils.removeExt(subtreeNode.filePath)}`);
+					subtreeNode._routePathSegmentMetadata = require_utils.joinRoutePathSegmentMetadata(routePath, pathPrefix, literalPathPrefixSegments, subtreeNode._routePathSegmentMetadata);
+					subtreeNode.routePath = routePath;
+					if (subtreeNode.originalRoutePath) subtreeNode.originalRoutePath = require_utils.cleanPath(`${originalPathPrefix}${subtreeNode.originalRoutePath}`);
 					subtreeNode.filePath = `${node.directory}/${subtreeNode.filePath}`;
 				});
 				return routeNodes;
@@ -90,6 +99,7 @@ async function getRouteNodesRecursive(tsrConfig, root, fullDir, nodes, tokenRege
 				};
 			}
 			const parentRoutePath = require_utils.removeTrailingSlash(parent?.routePath ?? "/");
+			const parentOriginalRoutePath = require_utils.removeTrailingSlash(parent?.originalRoutePath ?? parent?.routePath ?? "/");
 			const virtualParentRoutePath = parent?.routePath ?? `/__root`;
 			switch (node.type) {
 				case "index": {
@@ -99,6 +109,8 @@ async function getRouteNodesRecursive(tsrConfig, root, fullDir, nodes, tokenRege
 						fullPath,
 						variableName,
 						routePath: `${parentRoutePath}/`,
+						originalRoutePath: `${parentOriginalRoutePath}/`,
+						_routePathSegmentMetadata: parent?._routePathSegmentMetadata ? [...parent._routePathSegmentMetadata] : void 0,
 						_fsRouteType: "static",
 						_virtualParentRoutePath: virtualParentRoutePath
 					};
@@ -108,7 +120,8 @@ async function getRouteNodesRecursive(tsrConfig, root, fullDir, nodes, tokenRege
 					let routeNode;
 					const { routePath: escapedSegment, originalRoutePath: originalSegment } = require_utils.determineInitialRoutePath(require_utils.removeLeadingSlash(lastSegment));
 					const routePath = `${parentRoutePath}${escapedSegment}`;
-					const originalRoutePath = `${parentRoutePath}${originalSegment}`;
+					const originalRoutePath = `${parentOriginalRoutePath}${originalSegment}`;
+					const routePathSegmentMetadata = require_utils.createLiteralRoutePathSegmentMetadata(routePath, parent, true);
 					if (node.file) {
 						const { filePath, variableName, fullPath } = getFile(node.file);
 						routeNode = {
@@ -117,6 +130,7 @@ async function getRouteNodesRecursive(tsrConfig, root, fullDir, nodes, tokenRege
 							variableName,
 							routePath,
 							originalRoutePath,
+							_routePathSegmentMetadata: routePathSegmentMetadata,
 							_fsRouteType: "static",
 							_virtualParentRoutePath: virtualParentRoutePath
 						};
@@ -126,6 +140,7 @@ async function getRouteNodesRecursive(tsrConfig, root, fullDir, nodes, tokenRege
 						variableName: require_utils.routePathToVariable(routePath),
 						routePath,
 						originalRoutePath,
+						_routePathSegmentMetadata: routePathSegmentMetadata,
 						isVirtual: true,
 						_fsRouteType: "static",
 						_virtualParentRoutePath: virtualParentRoutePath
@@ -148,12 +163,14 @@ async function getRouteNodesRecursive(tsrConfig, root, fullDir, nodes, tokenRege
 					}
 					const lastSegment = node.id;
 					const { routePath: escapedSegment, originalRoutePath: originalSegment } = require_utils.determineInitialRoutePath(require_utils.removeLeadingSlash(lastSegment));
+					const routePath = `${parentRoutePath}${escapedSegment}`;
 					const routeNode = {
 						fullPath,
 						filePath,
 						variableName,
-						routePath: `${parentRoutePath}${escapedSegment}`,
-						originalRoutePath: `${parentRoutePath}${originalSegment}`,
+						routePath,
+						originalRoutePath: `${parentOriginalRoutePath}${originalSegment}`,
+						_routePathSegmentMetadata: require_utils.joinRoutePathSegmentMetadata(routePath, parentRoutePath, parent?._routePathSegmentMetadata, require_utils.createRoutePathSegmentMetadata(escapedSegment, originalSegment)),
 						_fsRouteType: "pathless_layout",
 						_virtualParentRoutePath: virtualParentRoutePath
 					};

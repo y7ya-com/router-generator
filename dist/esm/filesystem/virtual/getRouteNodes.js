@@ -1,6 +1,6 @@
 import { virtualRootRouteSchema } from "./config.js";
 import { rootPathId } from "../physical/rootPathId.js";
-import { cleanPath, determineInitialRoutePath, removeExt, removeLeadingSlash, removeTrailingSlash, replaceBackslash, routePathToVariable } from "../../utils.js";
+import { cleanPath, createLiteralRoutePathSegmentMetadata, createRoutePathSegmentMetadata, determineInitialRoutePath, joinRoutePathSegmentMetadata, removeExt, removeLeadingSlash, removeTrailingSlash, replaceBackslash, routePathToVariable } from "../../utils.js";
 import { loadConfigFile } from "./loadConfigFile.js";
 import { getRouteNodes as getRouteNodes$1 } from "../physical/getRouteNodes.js";
 import path, { join, resolve } from "node:path";
@@ -66,15 +66,24 @@ async function getRouteNodesRecursive(tsrConfig, root, fullDir, nodes, tokenRege
 	return {
 		children: (await Promise.all(nodes.map(async (node) => {
 			if (node.type === "physical") {
+				const { routePath: routePathPrefix, originalRoutePath: originalRoutePathPrefix } = node.pathPrefix ? determineInitialRoutePath(removeLeadingSlash(node.pathPrefix)) : {
+					routePath: "",
+					originalRoutePath: ""
+				};
 				const { routeNodes, physicalDirectories } = await getRouteNodes$1({
 					...tsrConfig,
 					routesDirectory: resolve(fullDir, node.directory)
 				}, root, tokenRegexes);
 				allPhysicalDirectories.push(resolve(fullDir, node.directory), ...physicalDirectories);
 				routeNodes.forEach((subtreeNode) => {
-					subtreeNode.variableName = routePathToVariable(`${node.pathPrefix}/${removeExt(subtreeNode.filePath)}`);
-					subtreeNode.routePath = cleanPath(`${parent?.routePath ?? ""}${node.pathPrefix}${subtreeNode.routePath}`);
-					if (subtreeNode.originalRoutePath) subtreeNode.originalRoutePath = cleanPath(`${parent?.routePath ?? ""}${node.pathPrefix}${subtreeNode.originalRoutePath}`);
+					const pathPrefix = cleanPath(`${parent?.routePath ?? ""}${routePathPrefix}`);
+					const originalPathPrefix = cleanPath(`${parent?.originalRoutePath ?? parent?.routePath ?? ""}${originalRoutePathPrefix}`);
+					const literalPathPrefixSegments = createLiteralRoutePathSegmentMetadata(pathPrefix, parent, true);
+					const routePath = cleanPath(`${pathPrefix}${subtreeNode.routePath}`);
+					subtreeNode.variableName = routePathToVariable(`${routePathPrefix}/${removeExt(subtreeNode.filePath)}`);
+					subtreeNode._routePathSegmentMetadata = joinRoutePathSegmentMetadata(routePath, pathPrefix, literalPathPrefixSegments, subtreeNode._routePathSegmentMetadata);
+					subtreeNode.routePath = routePath;
+					if (subtreeNode.originalRoutePath) subtreeNode.originalRoutePath = cleanPath(`${originalPathPrefix}${subtreeNode.originalRoutePath}`);
 					subtreeNode.filePath = `${node.directory}/${subtreeNode.filePath}`;
 				});
 				return routeNodes;
@@ -88,6 +97,7 @@ async function getRouteNodesRecursive(tsrConfig, root, fullDir, nodes, tokenRege
 				};
 			}
 			const parentRoutePath = removeTrailingSlash(parent?.routePath ?? "/");
+			const parentOriginalRoutePath = removeTrailingSlash(parent?.originalRoutePath ?? parent?.routePath ?? "/");
 			const virtualParentRoutePath = parent?.routePath ?? `/__root`;
 			switch (node.type) {
 				case "index": {
@@ -97,6 +107,8 @@ async function getRouteNodesRecursive(tsrConfig, root, fullDir, nodes, tokenRege
 						fullPath,
 						variableName,
 						routePath: `${parentRoutePath}/`,
+						originalRoutePath: `${parentOriginalRoutePath}/`,
+						_routePathSegmentMetadata: parent?._routePathSegmentMetadata ? [...parent._routePathSegmentMetadata] : void 0,
 						_fsRouteType: "static",
 						_virtualParentRoutePath: virtualParentRoutePath
 					};
@@ -106,7 +118,8 @@ async function getRouteNodesRecursive(tsrConfig, root, fullDir, nodes, tokenRege
 					let routeNode;
 					const { routePath: escapedSegment, originalRoutePath: originalSegment } = determineInitialRoutePath(removeLeadingSlash(lastSegment));
 					const routePath = `${parentRoutePath}${escapedSegment}`;
-					const originalRoutePath = `${parentRoutePath}${originalSegment}`;
+					const originalRoutePath = `${parentOriginalRoutePath}${originalSegment}`;
+					const routePathSegmentMetadata = createLiteralRoutePathSegmentMetadata(routePath, parent, true);
 					if (node.file) {
 						const { filePath, variableName, fullPath } = getFile(node.file);
 						routeNode = {
@@ -115,6 +128,7 @@ async function getRouteNodesRecursive(tsrConfig, root, fullDir, nodes, tokenRege
 							variableName,
 							routePath,
 							originalRoutePath,
+							_routePathSegmentMetadata: routePathSegmentMetadata,
 							_fsRouteType: "static",
 							_virtualParentRoutePath: virtualParentRoutePath
 						};
@@ -124,6 +138,7 @@ async function getRouteNodesRecursive(tsrConfig, root, fullDir, nodes, tokenRege
 						variableName: routePathToVariable(routePath),
 						routePath,
 						originalRoutePath,
+						_routePathSegmentMetadata: routePathSegmentMetadata,
 						isVirtual: true,
 						_fsRouteType: "static",
 						_virtualParentRoutePath: virtualParentRoutePath
@@ -146,12 +161,14 @@ async function getRouteNodesRecursive(tsrConfig, root, fullDir, nodes, tokenRege
 					}
 					const lastSegment = node.id;
 					const { routePath: escapedSegment, originalRoutePath: originalSegment } = determineInitialRoutePath(removeLeadingSlash(lastSegment));
+					const routePath = `${parentRoutePath}${escapedSegment}`;
 					const routeNode = {
 						fullPath,
 						filePath,
 						variableName,
-						routePath: `${parentRoutePath}${escapedSegment}`,
-						originalRoutePath: `${parentRoutePath}${originalSegment}`,
+						routePath,
+						originalRoutePath: `${parentOriginalRoutePath}${originalSegment}`,
+						_routePathSegmentMetadata: joinRoutePathSegmentMetadata(routePath, parentRoutePath, parent?._routePathSegmentMetadata, createRoutePathSegmentMetadata(escapedSegment, originalSegment)),
 						_fsRouteType: "pathless_layout",
 						_virtualParentRoutePath: virtualParentRoutePath
 					};

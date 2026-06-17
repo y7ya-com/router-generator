@@ -1,5 +1,5 @@
 import { Config, TokenMatcher } from './config.js';
-import { ImportDeclaration, RouteNode } from './types.js';
+import { ImportDeclaration, RouteNode, RoutePathSegmentMetadata } from './types.js';
 /**
  * SFC-style frameworks (Vue, Svelte) put the component as the file's default
  * export and don't allow a sibling `Route` named export — so the generator
@@ -76,6 +76,12 @@ export declare function hasEscapedLeadingUnderscore(originalSegment: string): bo
  * - Segment is fully escaped and content ends with _: "[_r0ut3_]" -> "_r0ut3_"
  */
 export declare function hasEscapedTrailingUnderscore(originalSegment: string): boolean;
+export declare function countRoutePathSegments(routePath?: string): number;
+export declare function countSlashSeparatedParts(path: string): number;
+export declare function hasRoutePathSegmentMetadata(metadata: RoutePathSegmentMetadata | undefined): metadata is RoutePathSegmentMetadata;
+export declare function createRoutePathSegmentMetadata(routePath?: string, originalPath?: string): Array<RoutePathSegmentMetadata | undefined> | undefined;
+export declare function createLiteralRoutePathSegmentMetadata(routePath: string, parent?: RouteNode, literalNewSegments?: boolean): Array<RoutePathSegmentMetadata | undefined> | undefined;
+export declare function joinRoutePathSegmentMetadata(routePath: string, prefixPath: string, prefixMetadata: Array<RoutePathSegmentMetadata | undefined> | undefined, childMetadata: Array<RoutePathSegmentMetadata | undefined> | undefined): Array<RoutePathSegmentMetadata | undefined> | undefined;
 export declare function replaceBackslash(s: string): string;
 export declare function routePathToVariable(routePath: string): string;
 export declare function removeUnderscores(s?: string): string | undefined;
@@ -88,6 +94,7 @@ export declare function removeUnderscores(s?: string): string | undefined;
  * @returns The path with non-escaped underscores removed
  */
 export declare function removeUnderscoresWithEscape(routePath?: string, originalPath?: string): string;
+export declare function removeLayoutSegmentsAndUnderscoresWithEscape(routePath?: string, originalPath?: string, routePathSegmentMetadata?: Array<RoutePathSegmentMetadata | undefined>): string;
 /**
  * Removes layout segments (segments starting with underscore) from a path,
  * but preserves segments where the underscore was escaped.
