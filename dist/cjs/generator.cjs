@@ -298,13 +298,21 @@ var Generator = class Generator {
 		else if (require_utils.isSingleExportRouteFile(node.filePath) && !node.hasNamedRouteExport) virtualRouteNodes.push(`const ${node.variableName}RouteImport = createFileRoute('${node.routePath}')()`);
 		else routeImports.push(require_utils.getImportForRouteNode(node, config, this.generatedRouteTreePath, this.root));
 		const rootIsSfc = require_utils.isSingleExportRouteFile(rootRouteNode.filePath);
-		if (rootIsSfc) virtualRouteNodes.unshift(`const rootRouteImport = createRootRoute()`);
+		const rootIsBareSfc = rootIsSfc && !rootRouteNode.hasNamedRouteExport;
+		if (rootIsBareSfc) virtualRouteNodes.unshift(`const rootRouteImport = createRootRoute()`);
 		const imports = [];
 		if (virtualRouteNodes.length > 0) imports.push({
 			specifiers: [{ imported: "createFileRoute" }],
 			source: this.targetTemplate.fullPkg
 		});
-		if (rootIsSfc) imports.push({
+		if (sortedRouteNodes.some((n) => {
+			const lazyNode = acc.routePiecesByPath[n.routePath]?.lazy;
+			return lazyNode && require_utils.isSingleExportRouteFile(lazyNode.filePath);
+		})) imports.push({
+			specifiers: [{ imported: "createLazyFileRoute" }],
+			source: this.targetTemplate.fullPkg
+		});
+		if (rootIsBareSfc) imports.push({
 			specifiers: [{ imported: "createRootRoute" }],
 			source: this.targetTemplate.fullPkg
 		});
@@ -331,7 +339,7 @@ var Generator = class Generator {
 		const createUpdateRoutes = sortedRouteNodes.map((node) => {
 			const pieces = acc.routePiecesByPath[node.routePath];
 			const loaderNode = pieces?.loader;
-			const isSfcNode = require_utils.isSingleExportRouteFile(node.filePath);
+			const isSfcNode = require_utils.isSingleExportRouteFile(node.filePath) && !node.isVirtual;
 			const componentNode = pieces?.component ?? (isSfcNode ? node : void 0);
 			const errorComponentNode = pieces?.errorComponent;
 			const notFoundComponentNode = pieces?.notFoundComponent;
@@ -362,7 +370,7 @@ var Generator = class Generator {
               })` : "",
 				lazyComponentNode ? (() => {
 					const isSfc = require_utils.isSingleExportRouteFile(lazyComponentNode.filePath);
-					const exportAccessor = isSfc ? "d.default" : "d.Route";
+					const exportAccessor = isSfc ? `createLazyFileRoute('${node.routePath}')({ ...d.Route?.options, component: d.Route?.options.component ?? d.default })` : "d.Route";
 					return `.lazy(() => import('./${require_utils.replaceBackslash(isSfc ? node_path.default.relative(node_path.default.dirname(config.generatedRouteTree), node_path.default.resolve(config.routesDirectory, lazyComponentNode.filePath)) : require_utils.removeExt(node_path.default.relative(node_path.default.dirname(config.generatedRouteTree), node_path.default.resolve(config.routesDirectory, lazyComponentNode.filePath)), config.addExtensions))}').then((d) => ${exportAccessor}))`;
 				})() : ""
 			].join("")].join("\n\n");
@@ -381,6 +389,7 @@ var Generator = class Generator {
 			["notFoundComponent", rootNotFoundComponentNode],
 			["pendingComponent", rootPendingComponentNode]
 		].filter((d) => d[1]).map((d) => {
+			if (d[0] === "component" && d[1] === rootRouteNode && rootRouteNode.hasNamedRouteExport && rootRouteNode.filePath.endsWith(".svelte")) return `component: rootRouteComponent`;
 			const isSfc = require_utils.isSingleExportRouteFile(d[1].filePath);
 			const exportName = isSfc ? "default" : d[0];
 			const importPath = require_utils.replaceBackslash(isSfc ? node_path.default.relative(node_path.default.dirname(config.generatedRouteTree), node_path.default.resolve(config.routesDirectory, d[1].filePath)) : require_utils.removeExt(node_path.default.relative(node_path.default.dirname(config.generatedRouteTree), node_path.default.resolve(config.routesDirectory, d[1].filePath)), config.addExtensions));
@@ -436,7 +445,7 @@ ${acc.routeTree.map((child) => `${child.variableName}Route: typeof ${require_uti
 		let mergedImports = require_utils.mergeImportDeclarations(imports);
 		if (config.disableTypes) mergedImports = mergedImports.filter((d) => d.importKind !== "type");
 		const importStatements = mergedImports.map(require_utils.buildImportString);
-		if (!rootIsSfc) {
+		if (!rootIsBareSfc) {
 			const rootRouteImport = require_utils.getImportForRouteNode(rootRouteNode, config, this.generatedRouteTreePath, this.root);
 			routeImports.unshift(rootRouteImport);
 		}
@@ -702,6 +711,10 @@ ${acc.routeTree.map((child) => `${child.variableName}Route: typeof ${require_uti
 			});
 			updatedCacheEntry.fileContent = rootRouteContent;
 			updatedCacheEntry.mtimeMs = stats.mtimeMs;
+		}
+		if (node.filePath.endsWith(".svelte")) {
+			const moduleScript = require_utils.extractSvelteModuleScript(updatedCacheEntry.fileContent);
+			if (moduleScript && /\bexport\s+(?:const|let|var)\s+Route\b|\bexport\s*\{[^}]*\bRoute\b[^}]*\}/.test(moduleScript.content)) node.hasNamedRouteExport = true;
 		}
 		this.routeNodeShadowCache.set(node.fullPath, updatedCacheEntry);
 	}
